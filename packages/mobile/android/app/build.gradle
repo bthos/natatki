@@ -79,8 +79,9 @@ android {
         applicationId "com.natatki"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // CI passes the workflow run number so every APK installs over the previous one.
+        versionCode((System.getenv("NATATKI_VERSION_CODE") ?: "1").toInteger())
+        versionName(System.getenv("NATATKI_VERSION_NAME") ?: "1.0")
     }
     signingConfigs {
         debug {
@@ -89,15 +90,23 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Real release key, provided by CI from repository secrets (see .github/workflows/android-apk.yml).
+        if (System.getenv("NATATKI_KEYSTORE_FILE")) {
+            release {
+                storeFile file(System.getenv("NATATKI_KEYSTORE_FILE"))
+                storePassword System.getenv("NATATKI_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("NATATKI_KEY_ALIAS")
+                keyPassword System.getenv("NATATKI_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Falls back to the committed debug key when no release keystore is configured.
+            signingConfig System.getenv("NATATKI_KEYSTORE_FILE") ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }

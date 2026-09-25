@@ -7,7 +7,7 @@ import { GitHubApiClient } from '../services/github-api';
 import { AIService } from '../services/ai-service';
 import { SyncQueue } from '../services/sync-queue';
 import { getAccessToken } from '../utils/auth-helper';
-import type { CreateNoteRequest, UpdateNoteRequest, NoteResponse, GetNotesResponse } from '@natatki/shared';
+import type { Note, CreateNoteRequest, UpdateNoteRequest, NoteResponse, GetNotesResponse } from '@natatki/shared';
 import { generateNoteId, noteToMarkdown, markdownToNote, generateNoteFilename, SyncStatus } from '@natatki/shared';
 import { config } from '../config';
 

@@ -101,7 +101,7 @@ const NoteEditScreen: React.FC = () => {
               n.tags = tagArray;
               n.category = category.trim() || undefined;
               n.updatedAt = now;
-              n.syncStatus = 'pending';
+              n.localSyncStatus = 'pending';
             });
           }
         } else {
@@ -116,7 +116,7 @@ const NoteEditScreen: React.FC = () => {
             note.tags = tagArray;
             note.category = category.trim() || undefined;
             note.linkedRepos = [];
-            note.syncStatus = 'pending';
+            note.localSyncStatus = 'pending';
           });
         }
       });

@@ -6,6 +6,8 @@ import { Model } from '@nozbe/watermelondb';
 import { field, date, readonly, json } from '@nozbe/watermelondb/decorators';
 import type { Note as NoteType, SyncStatus, LinkedRepo } from '@natatki/shared';
 
+export type LocalSyncStatus = `${SyncStatus}`;
+
 export class Note extends Model {
   static table = 'notes';
 
@@ -14,15 +16,16 @@ export class Note extends Model {
   @field('updated_at') updatedAt!: number;
   @field('title') title?: string;
   @field('body') body!: string;
-  @json('tags', (tags: string[]) => tags, (tags: string[]) => tags) tags!: string[];
+  @json('tags', (tags: string[]) => tags ?? []) tags!: string[];
   @field('category') category?: string;
   @field('ai_summary') aiSummary?: string;
-  @json('linked_repos', (repos: LinkedRepo[]) => repos, (repos: LinkedRepo[]) => repos) linkedRepos!: LinkedRepo[];
-  @field('sync_status') syncStatus!: SyncStatus;
+  @json('linked_repos', (repos: LinkedRepo[]) => repos ?? []) linkedRepos!: LinkedRepo[];
+  // Named localSyncStatus because WatermelonDB's Model already defines a `syncStatus` getter.
+  @field('sync_status') localSyncStatus!: LocalSyncStatus;
   @field('github_path') githubPath?: string;
   @field('github_sha') githubSha?: string;
   @field('etag') etag?: string;
-  @field('last_modified') lastModified?: string;
+  @field('last_modified') lastModified?: number;
 
   // Helper method to convert to shared Note type
   toNoteType(): NoteType {
@@ -37,7 +40,7 @@ export class Note extends Model {
       aiSummary: this.aiSummary,
       attachments: [], // Load separately
       linkedRepos: this.linkedRepos,
-      syncStatus: this.syncStatus
+      syncStatus: this.localSyncStatus as SyncStatus
     };
   }
 
@@ -53,7 +56,7 @@ export class Note extends Model {
       category: note.category,
       aiSummary: note.aiSummary,
       linkedRepos: note.linkedRepos,
-      syncStatus: note.syncStatus || 'synced'
+      localSyncStatus: note.syncStatus ?? 'synced'
     };
   }
 }

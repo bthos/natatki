@@ -29,10 +29,12 @@ export interface CreateNoteRequest {
 }
 
 export interface UpdateNoteRequest {
-  title?: string;
+  /** null clears the field */
+  title?: string | null;
   body?: string;
   tags?: string[];
-  category?: string;
+  /** null clears the field */
+  category?: string | null;
   attachments?: Attachment[];
 }
 

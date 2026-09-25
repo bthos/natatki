@@ -61,7 +61,7 @@ export class SyncService {
           console.error(`Failed to sync note ${note.noteId}:`, error);
           await database.write(async () => {
             await note.update((n: Note) => {
-              n.syncStatus = 'error';
+              n.localSyncStatus = 'error';
             });
           });
         }
@@ -81,7 +81,7 @@ export class SyncService {
   private async syncNote(note: Note): Promise<void> {
     await database.write(async () => {
       await note.update((n: Note) => {
-        n.syncStatus = 'syncing';
+        n.localSyncStatus = 'syncing';
       });
     });
 
@@ -114,7 +114,7 @@ export class SyncService {
 
       await database.write(async () => {
         await note.update((n: Note) => {
-          n.syncStatus = 'synced';
+          n.localSyncStatus = 'synced';
         });
       });
     } catch (error: any) {
@@ -122,7 +122,7 @@ export class SyncService {
         // Will retry later
         await database.write(async () => {
           await note.update((n: Note) => {
-            n.syncStatus = 'pending';
+            n.localSyncStatus = 'pending';
           });
         });
       } else {
@@ -170,7 +170,7 @@ export class SyncService {
                 note.category = updates.category;
                 note.aiSummary = updates.aiSummary;
                 note.linkedRepos = updates.linkedRepos!;
-                note.syncStatus = updates.syncStatus!;
+                note.localSyncStatus = updates.localSyncStatus!;
               });
               console.log('[SyncService] pullNotes: Updated note', noteData.id);
             } else {
@@ -187,7 +187,7 @@ export class SyncService {
                 note.category = updates.category;
                 note.aiSummary = updates.aiSummary;
                 note.linkedRepos = updates.linkedRepos!;
-                note.syncStatus = updates.syncStatus!;
+                note.localSyncStatus = updates.localSyncStatus!;
               });
               console.log('[SyncService] pullNotes: Created note', noteData.id);
             }

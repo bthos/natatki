@@ -110,7 +110,7 @@ router.get('/analyze', async (req: Request, res: Response) => {
                 const noteContent = Buffer.from(fileResponse.data.content, 'base64').toString('utf-8');
                 const note = markdownToNote(noteContent, file.name);
                 
-                if (note.id === noteId) {
+                if (note && note.id === noteId) {
                   // Use AI to match note to repositories
                   const aiAccessToken = await getAIAccessToken(req);
                   if (aiAccessToken) {

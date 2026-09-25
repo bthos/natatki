@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { Note, SyncStatus } from '@natatki/shared';
+import type { Note, SyncStatus, UpdateNoteRequest } from '@natatki/shared';
 import { apiClient } from '@/lib/api-client';
 
 interface NotesState {
@@ -20,7 +20,7 @@ interface NotesState {
   // Actions
   fetchNotes: (owner?: string, repo?: string) => Promise<void>;
   createNote: (note: Partial<Note>, owner?: string, repo?: string) => Promise<Note>;
-  updateNote: (noteId: string, updates: Partial<Note>, owner?: string, repo?: string) => Promise<void>;
+  updateNote: (noteId: string, updates: UpdateNoteRequest, owner?: string, repo?: string) => Promise<void>;
   deleteNote: (noteId: string, owner?: string, repo?: string) => Promise<void>;
   enrichNote: (noteId: string, force?: boolean, owner?: string, repo?: string) => Promise<void>;
   enrichAllNotes: (owner?: string, repo?: string) => Promise<void>;
@@ -65,7 +65,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     }
   },
 
-  updateNote: async (noteId: string, updates: Partial<Note>, owner?: string, repo?: string) => {
+  updateNote: async (noteId: string, updates: UpdateNoteRequest, owner?: string, repo?: string) => {
     try {
       const response = await apiClient.updateNote(
         noteId,

@@ -16,9 +16,14 @@ import type {
   AnalyzeReposResponse
 } from '@natatki/shared';
 
-const API_BASE_URL = __DEV__
-  ? 'http://10.0.2.2:3001/api' // Android emulator uses 10.0.2.2 to access host localhost
-  : 'https://api.natatki.app/api'; // Production URL
+import buildConfig from '../build-config.json';
+
+// CI overwrites build-config.json with the NATATKI_API_URL repository variable.
+const API_BASE_URL =
+  buildConfig.apiBaseUrl ??
+  (__DEV__
+    ? 'http://10.0.2.2:3001/api' // Android emulator uses 10.0.2.2 to access host localhost
+    : 'https://api.natatki.app/api'); // Production URL
 
 export class ApiClient {
   private client: AxiosInstance;

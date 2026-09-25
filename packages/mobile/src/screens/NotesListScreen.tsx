@@ -238,7 +238,7 @@ const NotesListScreen: React.FC = () => {
   };
 
   const renderNote = ({ item }: { item: Note }) => {
-    const syncStatus = item.syncStatus;
+    const syncStatus = item.localSyncStatus;
     const statusColor = 
       syncStatus === 'synced' ? '#4CAF50' :
       syncStatus === 'pending' ? '#FF9800' :

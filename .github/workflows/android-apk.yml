@@ -1,0 +1,111 @@
+name: Android APK
+
+# Builds a standalone release APK (JS bundle embedded, no Metro needed) so the
+# app can be installed on a phone without compiling Android locally.
+#
+# Optional repository settings (Settings -> Secrets and variables -> Actions):
+#   variable NATATKI_API_URL          backend base URL baked into the APK, e.g. https://host/api
+#   secret   ANDROID_KEYSTORE_B64     base64 of a release keystore (else the committed debug key signs)
+#   secrets  ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths:
+      - 'packages/mobile/**'
+      - 'packages/shared/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android-apk.yml'
+  pull_request:
+    paths:
+      - 'packages/mobile/**'
+      - 'packages/shared/**'
+      - 'package-lock.json'
+      - '.github/workflows/android-apk.yml'
+  workflow_dispatch:
+    inputs:
+      architectures:
+        description: 'ABIs to build (comma separated)'
+        default: 'arm64-v8a'
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # attach the APK to a GitHub Release on v* tags
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+      NATATKI_VERSION_CODE: ${{ github.run_number }}
+      NATATKI_VERSION_NAME: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.1.{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build:shared
+
+      - name: Bake backend URL into the app
+        if: vars.NATATKI_API_URL != ''
+        env:
+          API_URL: ${{ vars.NATATKI_API_URL }}
+        run: |
+          node -e 'require("fs").writeFileSync("packages/mobile/src/build-config.json", JSON.stringify({ apiBaseUrl: process.env.API_URL }, null, 2) + "\n")'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore release keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "NATATKI_KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Assemble release APK
+        working-directory: packages/mobile/android
+        env:
+          NATATKI_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NATATKI_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NATATKI_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ARCHS: ${{ inputs.architectures || 'arm64-v8a' }}
+        run: ./gradlew assembleRelease -PreactNativeArchitectures="$ARCHS" --no-daemon
+
+      - name: Name the APK
+        id: apk
+        run: |
+          name="natatki-${NATATKI_VERSION_NAME}-${GITHUB_SHA::7}.apk"
+          cp packages/mobile/android/app/build/outputs/apk/release/app-release.apk "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "APK: \`$name\` ($(du -h "$name" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.name }}
+          retention-days: 30
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.name }}

@@ -8,8 +8,10 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=backend",
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces"
+    "build:shared": "npm run build -w @natatki/shared",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run build:shared && tsc --noEmit -p packages/backend && tsc --noEmit -p packages/web && tsc --noEmit -p packages/mobile",
+    "test": "npm run test --workspaces --if-present"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -19,4 +21,3 @@
     "typescript": "^5.3.3"
   }
 }
-

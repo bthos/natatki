@@ -8,10 +8,10 @@
     "android": "react-native run-android",
     "ios": "react-native run-ios",
     "start": "react-native start",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
-    "android:build": "cd android && gradlew.bat assembleRelease",
-    "android:build:debug": "cd android && gradlew.bat assembleDebug"
+    "android:build": "cd android && ./gradlew assembleRelease",
+    "android:build:debug": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
     "@natatki/shared": "*",
