@@ -23,6 +23,6 @@ This file is read by your IDE on every prompt. Add project-specific guidance bel
 ## Natatki project notes
 
 - Notes are stored in the separate repo `bthos/natatki-data` (`notes/*.md`, YAML front matter).
-- Never build Android locally: APKs are produced by GitHub Actions (see `docs/PLAN.md` §2 Phase 1).
+- Never build Android locally: APKs are produced by GitHub Actions (`.github/workflows/android-apk.yml`, see `docs/PLAN.md` §1 and §4).
 - Current fix/development plan and known bugs: `docs/PLAN.md`.
 - After cloning: `git submodule update --init && talaka/shared/lifecycle/tools/init.sh -n`.

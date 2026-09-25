@@ -1,214 +1,141 @@
 # Natatki: fix and development plan
 
-Status: draft, 2026-09-25. Based on the two repos as they are on GitHub
-(`bthos/natatki`, `bthos/natatki-data`) and the talaka kit added as a submodule.
+Status: 2026-09-25. Based on the source pushed to `bthos/natatki` (`ae65e35`), the note
+history in `bthos/natatki-data`, and the PRD in `plans/initial-requirements-for-natatki-app.md`.
+Line references are to the code as of this plan.
 
-## 0. What exists today
+## 0. What the code is
 
-| Repo | Contents |
-|------|----------|
-| `bthos/natatki` | README, `.gitignore`, and now the `talaka/` submodule. **No application source is committed.** |
-| `bthos/natatki-data` | The note store: `notes/*.md` (Markdown + YAML front matter), one GitHub Models prompt (`note-enricher.prompt.yaml`), 46 commits, mostly by the `natatki[bot]` GitHub App. |
-| `bthos/talaka` (submodule) | The AI development pipeline (agents Bagnik, Cmok, Mokash, Veles, Yaga, Zlydni, plus 14 skills). Initialized with `init.sh`; see §5. |
+npm-workspaces monorepo:
 
-The `.gitignore` (Expo, React Native iOS/Android, WatermelonDB, `*.pem` for a GitHub App
-key, `web-build/`) and the data history suggest the app is:
+| Package | Stack | Role |
+|---------|-------|------|
+| `packages/shared` | TypeScript | Note types, Markdown/front-matter (de)serializer, API types |
+| `packages/backend` | Express, axios | `/api/notes`, `/api/ai/enrich`, `/api/repos/analyze`, `/api/plans`, OAuth; writes to the data repo through the GitHub Contents API, in either `oauth` mode (user token) or `app` mode (GitHub App installation token = `natatki[bot]`) |
+| `packages/web` | Next.js 14, zustand | Notes list/editor, repo suggestions, GitHub OAuth login |
+| `packages/mobile` | **bare React Native 0.74.5** (not Expo), WatermelonDB, react-navigation | Offline notes list/editor, sync service, repo suggestions |
 
-- a **React Native / Expo** client (Android, iOS, web) with a local **WatermelonDB** store;
-- a backend or serverless part that holds the **GitHub App private key** and commits to
-  `natatki-data` as `natatki[bot]`;
-- AI enrichment through **GitHub Models** (`openai/gpt-4o-mini`), which returns
-  `{category, tags, summary, suggestedTitle}`.
+AI calls go to GitHub Models (`models.github.ai`) and always use the **user's** token.
 
-**Blocker:** the source code has to be pushed to `bthos/natatki` before anything below
-can be implemented or built in CI. Everything in §1 is inferred from the data it wrote.
+## 1. Done in this branch (`claude/wonderful-tesla-jxk3ff`)
 
-## 1. Bugs found in the data history
+- **APK built on GitHub.** `.github/workflows/android-apk.yml` builds a standalone release
+  APK (JS bundled, Hermes, arm64) on every push that touches mobile or shared code, on PRs,
+  on `v*` tags (attached to the Release) and manually (*Actions → Android APK → Run
+  workflow*, where you can pick the ABIs). You download it from the run's **Artifacts**.
+  - Repo **variable** `NATATKI_API_URL`: the backend URL baked into the APK. Without it the
+    release build points at `https://api.natatki.app/api` (`src/api/client.ts`).
+  - Repo **secrets** `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`,
+    `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`: an optional real release key. Without
+    them the committed debug key signs, which is fine for sideloading. `versionCode` is
+    the run number, so each APK installs over the previous one.
+- **`.github/workflows/ci.yml`** runs typecheck (all 4 packages), tests, and the backend and
+  web builds on PRs and on `main`.
+- Things that blocked a CI build:
+  - `gradle.properties` hard-coded a Windows `org.gradle.java.home`;
+  - `gradlew` was not executable;
+  - the `android:build` scripts called `gradlew.bat`;
+  - `shared` must be built before bundling (`npm run build:shared`).
+- **Web build fixed:** there were two Reacts in the tree (web wanted 18.3.1, mobile hoisted
+  18.2.0), so `next build` crashed while prerendering. Web is pinned to 18.2.0.
+- **Type errors fixed:**
+  - backend `Note` import (`routes/notes.ts`) and a null check (`routes/repos.ts`);
+  - web: `UpdateNoteRequest` now allows `null` to clear a field;
+  - mobile: `experimentalDecorators` was missing. `Note.syncStatus` shadowed WatermelonDB
+    `Model.syncStatus` and is renamed to `localSyncStatus` (same DB column).
+- **Removed debug instrumentation** in `index.js`, `App.tsx` and `database/index.ts`. It
+  POSTed to `127.0.0.1:7245` on every start.
 
-Evidence comes from `git log -p` in `natatki-data`.
+## 2. Bugs still open (ranked)
 
-| # | Bug | Evidence | Severity |
-|---|-----|----------|----------|
-| B1 | **Editing a note drops `title`, `tags` and `category`.** Every "Update note" commit after an enrichment deletes those three keys and keeps only `aiSummary`. The next enrich writes them back with *different* values, so the metadata changes on every edit. | `357992b`, `4f6266d`, `9dd9fa6` (the diff removes `title/tags/category` and keeps `aiSummary`) | High, data loss |
-| B2 | **File-name collisions.** The file name is `YYYY-MM-DD-` plus the first 8 digits of the ms timestamp, so all notes made within the same ~100 s get the same name. `note_1767876830012…` and `note_1767876844411…` both map to `2026-01-08-17678768.md`. | `48b2cd7`, `5603424` | High, a note can overwrite another |
-| B3 | **The mobile client writes notes in a different format.** `notes/note_1767876830012_ikpxsaf` has no `.md` extension and no front matter, and it was committed with the user's own token rather than by the bot. This is a second serializer or a fallback path. | `5603424` | High |
-| B4 | **One commit per autosave.** 10 "Update note" commits in 70 s for a single note (19:16:36 → 19:18:47). This is slow, can hit rate limits, clutters history, and makes SHA conflicts likely. | `d5cec32`…`8ee3ef9` | Medium |
-| B5 | **Enrichment overwrites the user's title.** Every run replaces the title with `suggestedTitle`, even when a title is already set ("Note for Awesome BelLit" → "Updating Belarusian Literature Shelves" → "Scrap updates…"). The prompt asks for a title only "if the note doesn't have one", but the app still applies it. | `5c99fca`, `6bb2d31`, `e34cbf9` | Medium |
-| B6 | **Metadata in the wrong language, with mistranslations.** Notes are in Belarusian or Russian, but titles, tags and summaries come back in English. "пампаваць" (to update or fill up) became "Scrap". | current `2026-01-06-17677239.md` | Medium |
-| B7 | **Non-note files in `notes/`.** `note-enricher.prompt.yaml` sits among the notes, so any loader that reads the folder will try to parse it as a note. | `324b88a` | Low |
-| B8 | **Inconsistent commit messages.** Update messages use the note ID sometimes and the title other times. | log | Low |
-| B9 | **No trailing newline** in files; mixed local and UTC author times. | all notes | Cosmetic |
-| B10 | **Enrichment is not idempotent.** Enriching the same text twice gives different tags and category. Needs `temperature: 0` or merging with existing tags. | `97e6dd9` vs `7a6aff3` | Low |
+| # | Bug | Where | Effect |
+|---|-----|-------|--------|
+| **B1** | **Mobile has no login.** `apiClient.setAccessToken` is never called, so every request goes out without `Authorization`. In `oauth` mode everything returns 401. In `app` mode notes work, but `/ai/enrich` and repo analysis still return 401 (`getAIAccessToken` needs a user token). | `mobile/src/api/client.ts`, `backend/src/utils/auth-helper.ts` | The mobile app can't sync in oauth mode and can never enrich |
+| **B2** | **In `app` mode the backend has no authentication.** Anyone who can reach the server can read, write and delete notes with the installation token. | `auth-helper.ts:getAccessToken` | Security: data exposure once deployed |
+| **B3** | **Lost updates drop title, tags and category.** Clients send every field from their own copy. After a server-side enrichment that copy is stale, so saving writes `title: null, tags: [...old]` over the enriched values. This matches natatki-data commits `357992b`, `4f6266d`, `9dd9fa6`. There's no version check (sha or `updatedAt`). | `web/.../NoteEditor.tsx:48`, `mobile/.../sync-service.ts:95`, `backend/routes/notes.ts` PUT | Data loss |
+| **B4** | **Enrichment always replaces the title** (`title: enrichment.suggestedTitle \|\| note.title`). It also uses `temperature 0.7`, and two different models (`gpt-5-mini` and `gpt-4o-mini`). | `backend/routes/ai.ts:96`, `services/ai-service.ts:37,119` | Titles change on every run |
+| **B5** | **File-name collisions.** The name uses the first 8 digits of the ms timestamp (about 100 s resolution), so two notes created close together get the same path. It already happened on 2026-01-08. | `shared/utils/note-utils.ts:generateNoteFilename` | A create fails, or a note is overwritten |
+| **B6** | **Mobile creates duplicates.** The server generates a new `id` on create, but the local note keeps its own `noteId`. The next pull inserts the server copy as a second note, and `githubPath` is set to a wrong path (`notes/<id>.md`). | `mobile/services/sync-service.ts:101-110` | Every mobile-created note appears twice |
+| **B7** | **Pull overwrites unsynced local edits** and marks them `synced`. Notes deleted on the server are never removed locally. WatermelonDB also rewrites `updated_at` on every update, so server timestamps are lost. | `sync-service.ts:pullNotes` | Offline edits lost |
+| **B8** | **Every update and delete reads every note.** PUT and DELETE list `notes/` and GET each file until the id matches: N+1 API calls per save. Worse, a file without front matter falls back to the *requested* id (`markdownToNote(content, noteId)`), so a stray file can "match" and be overwritten or deleted. | `backend/routes/notes.ts:300-325, 420-440` | Rate limits; possibly deleting the wrong file |
+| **B9** | **The serializer isn't safe.** Strings are wrapped in `"…"` without escaping, so a `"` or a newline in a title or summary corrupts the front matter. The parser needs exactly `---\n…\n---\n\n` (no CRLF, no missing blank line). Files without front matter get `createdAt = now` on every read. | `shared/utils/note-utils.ts` | Corrupt or re-dated notes |
+| **B10** | **Mobile errors lose their code.** `handleError` is never used, so `error.code === 'RATE_LIMIT_EXCEEDED'` never matches. The token is loaded asynchronously in the constructor, so early requests race it. | `mobile/src/api/client.ts` | No rate-limit backoff |
+| **B11** | **Server state lives in memory** (`notesCache`, `SyncQueue`, OAuth sessions), and `SESSION_SECRET` defaults to `change-me-in-production`. | backend | Lost on restart; weak default |
+| **B12** | **Android project drift:** Flipper (removed in RN 0.74) is still wired in; `@react-native/babel-preset` and `metro-config` are at 0.76 while RN is 0.74; `prepare-build.sh` and the postinstall symlink script are workarounds for hoisting; `debug.keystore` is tracked although `.gitignore` excludes it. | `packages/mobile/android`, `package.json` | Fragile builds |
+| **B13** | **No tests and no ESLint config.** `eslint .` fails because there's no config, and `next lint` prompts interactively. | all | No safety net |
+| B14 | Data repo hygiene: a prompt YAML inside `notes/`, an extensionless note (`notes/note_1767876830012_ikpxsaf`), and one commit per autosave (10 in 70 s). | natatki-data | Clutter |
 
-## 2. Phases
+## 3. Milestones
 
-### Phase 0: repository hygiene (prerequisite, about 0.5 day)
-1. Push the app source to `bthos/natatki` (monorepo, e.g. `apps/mobile`, `apps/server`,
-   `packages/core`). Check that no `.pem`, `.env` or keystore gets committed. The
-   `.gitignore` already covers them; also run secret scanning on the first push.
-2. Add `package.json` scripts: `typecheck`, `lint`, `test` (these match `.tlk/PROJECT.md`).
-3. Put the note format in writing as `docs/NOTE_FORMAT.md` (a small schema, see §3.1).
-4. Protect `main`; do work on branches and open PRs.
+Each milestone goes through the talaka pipeline: `/requirements-eliciting` →
+`/architecture-planning` → `@bagnik` test gate → `@cmok` → `@bagnik` code QA → `@zlydni`.
+Every PR gets an installable APK from the Android APK workflow.
 
-### Phase 1: CI and cloud APK builds (no local Android compiling, about 1 day)
-Goal: every PR and every push to `main` produces a downloadable APK. No Android SDK or
-Gradle is needed on your machine.
+### M1: an APK you can use on the phone (next)
+1. Decide where the backend runs for testing (see open question Q1), then set `NATATKI_API_URL`.
+2. **Mobile login (B1):** GitHub OAuth device flow, or an app-link redirect to
+   `/api/auth/github/callback`, with the token stored in Keychain. Add a server-URL
+   override on a small Settings screen, so one APK can point at different backends.
+3. **Backend auth in app mode (B2):** require a user token on every route, check that the
+   user can access `owner/repo`, then use the installation token for writes.
+4. Smoke test on the phone: log in, create, edit, enrich, delete.
 
-- **`ci.yml`**: runs typecheck, lint and unit tests on every PR (Node only, about 1–2 minutes).
-- **`android-apk.yml`**: runs `expo prebuild` and then `./gradlew assembleRelease` on
-  `ubuntu-latest`, and uploads the APK with `actions/upload-artifact`. On a `v*` tag it
-  also attaches the APK to a GitHub Release, which gives a stable download link you can
-  open on the phone.
-  - Caches: npm, Gradle (`gradle/actions/setup-gradle`).
-  - Signing: a release keystore stored base64-encoded in repo secrets
-    (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
-    `ANDROID_KEY_PASSWORD`). Without these secrets it falls back to a debug-signed APK,
-    which is fine for sideloading tests. Keep one keystore so updates install over the
-    previous build.
-  - Size: build `arm64-v8a` only for test builds (`-PreactNativeArchitectures=arm64-v8a`),
-    which is about a third of the size and time.
-  - The JS bundle is embedded in the APK, so it runs without Metro.
-- Optional: the **EAS Build** cloud (`eas build -p android --profile preview`) is an
-  alternative with no runner setup, but its free tier has a queue and a monthly limit.
-  GitHub Actions is free for public repos and is the default here.
-- Optional: **EAS Update / OTA** for JS-only changes, so a new APK is needed only when
-  native code changes.
+### M2: note format and storage correctness
+1. Test the `shared` serializer first: round-trips, quotes and newlines, CRLF, and every
+   historical file shape in natatki-data (B9). Emit JSON-quoted strings (valid YAML), put
+   `createdAt` in front matter, and keep unknown keys.
+2. Unique file names `YYYY-MM-DD-<full id>.md`, plus a migration script for existing files (B5).
+3. The id-to-path map comes from `metadata.json` or a cached listing. PUT and DELETE take
+   `path + sha` from the client. Never fall back to the requested id when matching (B8).
+4. **Optimistic concurrency (B3):** the client sends `baseSha`. The server returns 409 on
+   a mismatch, and the client merges only the fields that actually changed (a PATCH-style
+   request with only dirty fields).
+5. **Enrichment rules (B4):** never overwrite a title the user set (show it as a
+   suggestion instead); merge tags; one model, `temperature: 0`; answer in the note's
+   language (notes are be/ru/en); skip when the body hash is unchanged.
 
-Template (to be adjusted to the real app path once the source is pushed):
+### M3: mobile offline sync that doesn't lose data
+1. **Client-generated ids are authoritative:** the server accepts the `id` from the client
+   when creating (B6).
+2. Pull respects local `pending` and `error` notes (conflict → keep both), removes
+   tombstoned notes, and stores server timestamps in their own columns (B7).
+3. Debounce and batch pushes, so there's one commit per sync burst (B14), using the Git
+   Data API (tree + commit) for multi-note writes.
+4. Route errors through `handleError` and add retry/backoff on `retryAfter` (B10).
 
-```yaml
-# .github/workflows/android-apk.yml
-name: Android APK
-on:
-  pull_request:
-    paths: ["apps/mobile/**", "packages/**", ".github/workflows/android-apk.yml"]
-  push:
-    branches: [main]
-    tags: ["v*"]
-  workflow_dispatch:
-concurrency: { group: apk-${{ github.ref }}, cancel-in-progress: true }
-jobs:
-  apk:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
-    defaults: { run: { working-directory: apps/mobile } }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: 17 }
-      - uses: gradle/actions/setup-gradle@v4
-      - run: npm ci
-      - run: npx expo prebuild --platform android --no-install
-      - name: Restore keystore
-        if: env.HAS_KEYSTORE == 'true'
-        env: { KEYSTORE_B64: "${{ secrets.ANDROID_KEYSTORE_B64 }}" }
-        run: echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
-      - name: Build
-        working-directory: apps/mobile/android
-        env:
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
-      - uses: actions/upload-artifact@v4
-        with:
-          name: natatki-${{ github.sha }}
-          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
-          retention-days: 14
-      - if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with: { files: apps/mobile/android/app/build/outputs/apk/release/*.apk }
-```
+### M4: hardening
+- Persist server state (a SQLite or KV store) and require `SESSION_SECRET` in production (B11).
+- Android cleanup (B12): remove Flipper, align `@react-native/*` to 0.74, drop the symlink
+  scripts where possible, and put a real release keystore in secrets.
+- ESLint configs for all packages, and add lint to CI (B13).
+- Security review of the backend (token handling, CORS `*`, input validation with zod).
 
-(The release signing config in `build.gradle` — added via an Expo config plugin so it
-survives `prebuild` — reads the env vars and falls back to the debug key when they are empty.)
+### M5+: PRD features (by value)
+1. Quick capture: Android share-sheet target and a home-screen widget (PRD level 1).
+2. Photo and audio attachments (the schema and types already exist, nothing uses them).
+3. Search and filters over the local DB (partly exists in `NotesListScreen`).
+4. Repo matching and plan generation on mobile (PRD levels 2–3). The backend routes exist;
+   they need auth and caching.
+5. Push notifications (FCM), and opening a PR from a plan.
+6. iOS builds via a macOS runner (later; iOS can't be sideloaded like an APK).
 
-### Phase 2: fix the data bugs (about 2–3 days)
-3.1 **One shared serializer** (`packages/core/note.ts`) used by every client and by the
-server. Tests for it come first (talaka flow: architecture-planning, then the Bagnik test
-gate, then Cmok).
-  - Canonical schema: `id, createdAt, updatedAt, title?, tags[], category?, aiSummary?,
-    lang?, enrichedAt?` plus the body; a trailing newline; stable key order.
-  - **Update = read, merge, write.** Unknown and AI keys are always kept (fixes B1).
-    Add a round-trip test: `parse(serialize(n)) == n`.
-  - File name = `notes/YYYY/MM/<id>.md` (or `YYYY-MM-DD-<full id>.md`), which is unique
-    by construction (fixes B2). Keep old paths readable and add a one-off migration script.
-  - The loader accepts only `*.md` under `notes/`, tolerates files without front matter
-    (it builds an ID from the file name and keeps the body), and never overwrites them
-    unless they are edited (B3, B7).
-3.2 **Mobile path**: remove the second write path. All writes go through the same sync
-queue (fixes B3).
-3.3 **Sync batching**: debounce saves locally (WatermelonDB is the source of truth), then
-push dirty notes every N seconds or when the app goes to the background. Several notes can
-go in one commit through the Git Data API (tree + commit). Use optimistic concurrency on
-the blob or commit SHA with retry-merge on 409/422 (fixes B4). Commit messages:
-`note(<id>): update "<title>"` (B8).
-3.4 **Enrichment rules**:
-  - never overwrite a title the user set; show `suggestedTitle` as a suggestion (B5);
-  - merge with the user's tags instead of replacing them; `temperature: 0`;
-    skip enrichment if the body hash didn't change since `enrichedAt` (B10);
-  - the prompt says "answer in the note's language" and returns `lang`; add Belarusian and
-    Russian eval cases to `note-enricher.prompt.yaml` (B6).
-3.5 **Data cleanup PR in `natatki-data`**: move `note-enricher.prompt.yaml` to
-`.github/prompts/`, turn `note_1767876830012_ikpxsaf` into a proper `.md` with front
-matter, run the file-name migration, and add a small `validate-notes` GitHub Action that
-checks the schema on every push to the data repo.
+## 4. Testing APKs
+1. Push to any branch (or open a PR) that touches `packages/mobile` or `packages/shared`.
+2. *Actions → Android APK →* the run *→ Artifacts →* `natatki-<version>-<sha>.apk`
+   (downloads as a zip; unzip it on the phone or PC).
+3. For a stable link, push a tag `vX.Y.Z`. The APK is attached to that GitHub Release and
+   can be opened directly on the phone.
 
-### Phase 3: security and reliability (about 1–2 days)
-- The GitHub App key lives only on the server or function. The mobile app gets a
-  short-lived user token (GitHub App user-to-server OAuth, device flow) or talks to the
-  backend. It never ships a PAT or the key in the APK.
-- Offline-first: a queue of pending writes, visible sync status, conflict UI (keep both
-  versions and show a diff).
-- Error reporting (Sentry or similar) and a crash-free test build before release.
+## 5. Open questions
+- **Q1** Where will the backend run for phone testing? Options: a small always-on host
+  (Fly.io, Render or a VPS), or a tunnel to your PC (cloudflared or ngrok). The APK only
+  needs the URL.
+- **Q2** Which mode: keep `app` mode (bot commits, needs B2 fixed), or move to
+  user-token-only `oauth` mode (simpler, and commits show as you)?
+- **Q3** Is iOS in scope soon, or Android-only for now?
 
-### Phase 4: product development (iterative; each item goes through the talaka pipeline)
-Order is by value to effort:
-1. **Search and filters** (full text, tag, category) over the local DB.
-2. **Quick capture**: Android share-sheet target, home-screen widget, voice note with
-   transcription.
-3. **Markdown editor** with preview and checklists.
-4. **Project linking**, the README promise: pick a GitHub repo, and the AI suggests how an
-   idea applies to it and produces a Markdown change plan, stored next to the note and
-   optionally opened as an issue in the target repo.
-5. **Related notes** (embedding similarity) and automatic grouping.
-6. Web/desktop parity; iOS builds later (a macOS runner or EAS), because iOS cannot be
-   sideloaded like an APK.
-7. Localization of the UI (be / ru / en).
-
-## 3. Test strategy
-- Unit tests (Jest): serializer round-trips, file naming, the merge logic, and enrichment
-  merge rules. These run in `ci.yml` on every PR.
-- Contract test against a fixture copy of `natatki-data` (all historical file shapes,
-  including the extensionless one).
-- Manual smoke test on the phone using the APK artifact from the PR. Add a PR checklist
-  item: "installed APK from this run and created, edited and enriched a note".
-- Later: Maestro E2E flows running on an Android emulator in Actions (nightly only, since
-  it is slow).
-
-## 4. Order of work / milestones
-| Milestone | Contents | Done when |
-|-----------|----------|-----------|
-| M0 | Source pushed, scripts, NOTE_FORMAT.md | `npm test` runs in CI |
-| M1 | `ci.yml` + `android-apk.yml` | APK downloadable from a PR run |
-| M2 | Serializer, naming, merge (B1, B2, B3, B7, B9) | Round-trip tests green; migration applied to data repo |
-| M3 | Sync batching + enrichment rules (B4, B5, B6, B8, B10) | One commit per sync burst; titles stable over edits |
-| M4 | Security pass (Phase 3) | No secrets in APK (checked with `apktool` in CI) |
-| M5+ | Phase 4 features | Per feature, via talaka |
-
-## 5. How talaka is set up here
-- Submodule: `talaka/` → `https://github.com/bthos/talaka`. After cloning natatki, run
-  `git submodule update --init` and then `talaka/shared/lifecycle/tools/init.sh -n`
-  (per developer).
-- Committed: `.gitmodules`, the submodule pointer, the managed blocks in `CLAUDE.md`,
-  `AGENTS.md` and `.gitignore`, and `.claude/settings.json` (statusline and output style).
-- Per developer, git-ignored: `.tlk/` (PIPELINE.md, PROJECT.md, memory) and the copied
-  agents and skills in `.claude/`.
-- `.tlk/PROJECT.md` is filled with: test `npm test`, build `npm run typecheck && npm run lint`,
-  version files `package.json, app.json`. Re-check these once the source lands.
-- Suggested start: `/codebase-mapping` on the pushed source, then `/requirements-eliciting`
-  for M2 ("note serializer and file naming").
+## 6. Talaka
+- The submodule is at `talaka/`. After cloning, run `git submodule update --init` and then
+  `talaka/shared/lifecycle/tools/init.sh -n`.
+- `.tlk/PROJECT.md`: test `npm test`, build `npm run typecheck`, version files
+  `package.json, packages/mobile/package.json`.
