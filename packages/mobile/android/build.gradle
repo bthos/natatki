@@ -8,8 +8,8 @@ buildscript {
         targetSdkVersion = 35
         kotlinVersion = "1.9.24"
 
-        // We use NDK 23 which has both M1 support and is the side-by-side NDK version from AGP.
-        ndkVersion = "23.1.7779620"
+        // Same NDK as the React Native 0.74 template; CI preinstalls it (android-apk.yml).
+        ndkVersion = "26.1.10909125"
     }
     repositories {
         google()
