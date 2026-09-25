@@ -1,0 +1,22 @@
+{
+  "name": "natatki",
+  "version": "0.1.0",
+  "description": "Note-taking app with AI categorization and GitHub integration",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=backend",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}
+
