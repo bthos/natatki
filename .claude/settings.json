@@ -1,0 +1,8 @@
+{
+  "outputStyle": "Concise",
+  "statusLine": {
+    "type": "command",
+    "command": "bash talaka/statusline/tools/statusline.sh",
+    "refreshInterval": 10
+  }
+}
